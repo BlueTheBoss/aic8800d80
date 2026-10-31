@@ -39,6 +39,7 @@ class InstallerTests(unittest.TestCase):
         script = script.replace("/lib/firmware", str(self.firmware))
         script = script.replace("/sys/firmware/efi", str(self.root / "efi"))
         script = script.replace("/etc/wireplumber", str(self.root / "wpetc"))
+        script = script.replace("/etc/modprobe.d", str(self.root / "mpd"))
         setup = f"""
 {SHELL_OPTIONS}
 SCRIPT_DIR={shlex.quote(str(self.root))}
@@ -167,6 +168,25 @@ cleanup_legacy_bluetooth_config() {{ echo LEGACY_CLEANUP; }}
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("skipping Bluetooth SCO quirk", result.stdout)
         self.assertNotIn("SCO quirk installed", result.stdout)
+
+    def test_vendor_bt_flag_writes_blacklist(self):
+        result = self.run_installer_function(
+            "apply_vendor_bt_preference", stubs="USE_VENDOR_BT=1",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Vendor Bluetooth preference installed", result.stdout)
+        conf = next((self.root / "mpd").glob("aic8800-bt-vendor.conf"))
+        content = conf.read_text()
+        self.assertIn("blacklist btusb", content)
+
+    def test_vendor_bt_flag_off_is_additive_only(self):
+        result = self.run_installer_function(
+            "apply_vendor_bt_preference", stubs="USE_VENDOR_BT=0",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("--vendor-bt", result.stdout)
+        mpd = self.root / "mpd"
+        self.assertFalse(mpd.exists() and (mpd / "aic8800-bt-vendor.conf").exists())
 
 
 if __name__ == "__main__":

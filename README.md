@@ -72,6 +72,39 @@ The quirk's `hook` and `injections` parameters under
 many URBs were modified; a climbing counter during audio playback confirms
 the quirk is engaged.
 
+### Vendor Bluetooth driver (`--vendor-bt`)
+
+The bundled driver tree includes `aic_btusb` — AIC's Linux Bluetooth HCI
+driver (GPLv2, built for the kernel BlueZ stack) — as an optional companion
+to the standard `btusb` path. It carries the vendor's own voice/SCO
+handling (single-SCO alternate-setting logic and event tracking), which is
+the counterpart of the Windows driver shipped with combo dongles.
+
+```bash
+sudo ./install.sh --vendor-bt
+```
+
+This builds and installs `aic_btusb.ko` via DKMS and writes
+`/etc/modprobe.d/aic8800-bt-vendor.conf` (blacklists `btusb`); the vendor
+driver's USB ID table covers the AIC combo IDs (`a69c:8d81`,
+`368b:8d81`, …), so with `btusb` out of the way it binds automatically on
+the next enumeration — no manual binding or scripts afterwards. The
+installer also swaps a live, already-bound `btusb` immediately when run
+with the adapter present.
+
+Revert any time:
+
+```bash
+sudo rm /etc/modprobe.d/aic8800-bt-vendor.conf
+sudo modprobe -r aic_btusb && sudo modprobe btusb
+```
+
+This opt-in is primarily for adapters whose headset profile misbehaves
+under `btusb` (silent microphone, `corrupted SCO packet` bursts). When
+switching over, remove any WirePlumber HFP overrides shipped earlier
+(`wireplumber/52-aic8800-no-msbc.conf` and a user-level equivalent), since
+wideband mSBC may behave better under the vendor driver.
+
 ### Bluetooth microphone capture (HFP/SCO)
 
 The AIC8800D80 family desyncs its mSBC stream over USB isochronous SCO

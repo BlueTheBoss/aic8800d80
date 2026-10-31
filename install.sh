@@ -26,6 +26,9 @@ readonly SRC_DIR="/usr/src/${DRV_NAME}-${DRV_VERSION}"
 readonly MODULE_NAME="aic8800_fdrv"
 readonly LOG_FILE="/tmp/aic8800d80_install.log"
 
+# Vendor Bluetooth (aic_btusb) preference; toggled by --vendor-bt in main().
+USE_VENDOR_BT=0
+
 # Script directory (where the script is located)
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -480,6 +483,36 @@ install_firmware() {
 }
 
 #############################################################################
+# Vendor Bluetooth driver preference (--vendor-bt)
+#############################################################################
+
+# Optional opt-in: combo adapters bind the bundled vendor aic_btusb HCI
+# driver (the Linux counterpart of AIC's Windows driver, with voice/SCO
+# handling) instead of the generic kernel btusb. Implemented purely in
+# modprobe config — the vendor driver's USB ID table covers the AIC combo
+# IDs, so with btusb blacklisted it autoloads by modalias and no scripts
+# are involved afterwards.
+apply_vendor_bt_preference() {
+    if [ "$USE_VENDOR_BT" != "1" ]; then
+        print_info "Stock btusb Bluetooth path in use; pass --vendor-bt for the vendor aic_btusb driver (voice/SCO handling)."
+        return 0
+    fi
+
+    local conf="/etc/modprobe.d/aic8800-bt-vendor.conf"
+    print_info "Installing vendor Bluetooth driver preference to $conf..."
+    mkdir -p "$(dirname "$conf")" >> "$LOG_FILE" 2>&1
+    {
+        echo "# Written by the aic8800 installer (--vendor-bt)."
+        echo "# AIC combo Bluetooth interfaces bind the bundled vendor aic_btusb"
+        echo "# driver instead of the generic btusb. Remove this file and reboot"
+        echo "# (or run: sudo modprobe -r aic_btusb && sudo modprobe btusb) to"
+        echo "# return to the standard btusb path."
+        echo "blacklist btusb"
+    } > "$conf"
+    print_success "Vendor Bluetooth preference installed; aic_btusb binds on the next (re-)enumeration."
+}
+
+#############################################################################
 # DKMS Configuration - CORRIGIDO v2.0.4
 #############################################################################
 
@@ -682,7 +715,28 @@ load_module() {
         print_info "Try rebooting or check: sudo dmesg | grep aic8800"
     fi
 
-    print_info "Combo adapters use the standard btusb driver when their Bluetooth interface appears."
+    if [ "$USE_VENDOR_BT" = "1" ]; then
+        print_info "Combo adapters use the vendor aic_btusb driver (--vendor-bt)."
+    else
+        print_info "Combo adapters use the standard btusb driver when their Bluetooth interface appears."
+    fi
+
+    # --vendor-bt: swap the generic driver for the vendor one on the live
+    # system. The modprobe blacklist redirects any future re-enumeration;
+    # this also handles the already-bound case so no reboot is required.
+    if [ "$USE_VENDOR_BT" = "1" ]; then
+        print_info "Switching Bluetooth to the vendor aic_btusb driver..."
+        if modprobe -r btusb >> "$LOG_FILE" 2>&1; then
+            if modprobe aic_btusb >> "$LOG_FILE" 2>&1; then
+                print_success "Vendor aic_btusb driver is bound (no reboot needed)."
+            else
+                print_warning "aic_btusb did not bind immediately; it will bind on the next adapter (re-)enumeration."
+                print_info "Check: sudo dmesg | grep -E 'aic_btusb|bluetooth'"
+            fi
+        else
+            print_warning "Could not unload btusb (is a Bluetooth device busy?); reboot to switch drivers."
+        fi
+    fi
 
     # The module has a USB alias and normally autoloads when 368b:8d81 appears.
     # Explicitly load it here as well when that device was already present before
@@ -722,10 +776,18 @@ verify_installation() {
         print_info "Wi-Fi module not currently loaded (this is OK if no hardware is connected)."
     fi
 
-    if lsmod | awk '{print $1}' | grep -qx 'btusb' || compgen -G '/sys/class/bluetooth/hci*' > /dev/null; then
-        print_success "A Bluetooth controller or the standard btusb module is present."
+    if lsmod | awk '{print $1}' | grep -qx 'btusb' || lsmod | awk '{print $1}' | grep -qx 'aic_btusb' || compgen -G '/sys/class/bluetooth/hci*' > /dev/null; then
+        print_success "A Bluetooth controller is bound (btusb or vendor aic_btusb)."
     else
         print_info "No Bluetooth controller is present (normal for Wi-Fi-only adapters or when no combo adapter is connected)."
+    fi
+
+    if [ "$USE_VENDOR_BT" = "1" ]; then
+        if lsmod | awk '{print $1}' | grep -qx 'aic_btusb'; then
+            print_success "Vendor aic_btusb driver is active."
+        else
+            print_warning "Vendor aic_btusb preference is set but the driver is not loaded yet (binds at next enumeration/reboot)."
+        fi
     fi
 
     if aic_zlp_target_present; then
@@ -788,7 +850,15 @@ show_final_instructions() {
     echo -e "${CYAN}Important Information:${NC}"
     echo ""
     echo "✓ Wi-Fi driver and firmware loader installed via DKMS"
-    echo "✓ Combo adapters use the standard Linux btusb driver"
+    if [ "$USE_VENDOR_BT" = "1" ]; then
+        echo "✓ Combo adapters use the vendor aic_btusb driver (--vendor-bt)"
+        echo "  Revert anytime: remove /etc/modprobe.d/aic8800-bt-vendor.conf, then:"
+        echo "  sudo modprobe -r aic_btusb && sudo modprobe btusb"
+    else
+        echo "✓ Combo adapters use the standard Linux btusb driver"
+        echo "  Optional: rerun with --vendor-bt for the vendor aic_btusb driver"
+        echo "  (voice/SCO handling; AIC's Linux counterpart of the Windows driver)"
+    fi
     echo "✓ Device-scoped Bluetooth ACL ZLP quirk installed for 368b:8d81"
     echo "✓ Automatic rebuild enabled for kernel updates"
     echo "✓ Firmware installed in /lib/firmware/"
@@ -858,7 +928,18 @@ main() {
     log_message "START" "Installation started"
     log_message "INFO" "Kernel: $(uname -r)"
     log_message "INFO" "Distribution: $(cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d= -f2 | tr -d '"')"
-    
+
+    # Optional flags before any system changes.
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+            --vendor-bt) USE_VENDOR_BT=1 ;;
+            *) echo "Unknown option: $arg (supported: --vendor-bt)" >> "$LOG_FILE" 2>&1 || true
+               echo "Unknown option: $arg (supported: --vendor-bt)"
+               exit 1 ;;
+        esac
+    done
+
     # Step 1: Check root privileges
     check_root
     
@@ -882,6 +963,10 @@ main() {
     
     # Step 8: Install via DKMS
     install_via_dkms
+
+    # Step 8b: Vendor Bluetooth preference (must be in place before the
+    # re-enumeration in load_module so aic_btusb wins driver selection).
+    apply_vendor_bt_preference
     
     # Step 9: Refresh initramfs
     refresh_initramfs
