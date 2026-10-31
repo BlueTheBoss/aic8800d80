@@ -39,6 +39,7 @@ class InstallerTests(unittest.TestCase):
         script = script.replace("/lib/firmware", str(self.firmware))
         script = script.replace("/sys/firmware/efi", str(self.root / "efi"))
         script = script.replace("/etc/wireplumber", str(self.root / "wpetc"))
+        script = script.replace("/etc/modules-load.d", str(self.root / "mld"))
         script = script.replace("/etc/modprobe.d", str(self.root / "mpd"))
         script = script.replace("/sys/bus/usb/devices", str(self.root / "usbsys"))
         setup = f"""
@@ -241,6 +242,22 @@ cleanup_legacy_bluetooth_config() {{ echo LEGACY_CLEANUP; }}
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         conf = next((self.root / "mpd").glob("aic8800-zlp-quirk.conf"))
         self.assertIn("options aic_zlp_quirk vendor_id=0xa69c product_id=0x8d81", conf.read_text())
+
+    def test_zlp_install_writes_modules_load_d(self):
+        dev = self.root / "usbsys" / "1-8"
+        dev.mkdir(parents=True)
+        (dev / "idVendor").write_text("a69c\n")
+        (dev / "idProduct").write_text("8d81\n")
+        self.run_installer_function(
+            "aic_zlp_target_present", stubs="", after="\necho ID=$ZLP_VENDOR_ID:$ZLP_PRODUCT_ID",
+        )
+        result = self.run_installer_function(
+            "install_zlp_quirk",
+            stubs="ZLP_VENDOR_ID=0xa69c\nZLP_PRODUCT_ID=0x8d81\nmodprobe() { :; }",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        ml = next((self.root / "mld").glob("aic_zlp_quirk.conf"))
+        self.assertEqual(ml.read_text().strip(), "aic_zlp_quirk")
 
 
 if __name__ == "__main__":

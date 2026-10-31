@@ -693,6 +693,14 @@ install_zlp_quirk() {
         echo "# ${ZLP_VENDOR_ID}:${ZLP_PRODUCT_ID}."
         echo "options aic_zlp_quirk vendor_id=${ZLP_VENDOR_ID} product_id=${ZLP_PRODUCT_ID}"
     } > "$conf"
+
+    # Autoload the quirk at every boot; the modprobe.d options file above
+    # supplies the detected identity automatically so no manual modprobe is
+    # needed after reboot or replug.
+    local ml_conf="/etc/modules-load.d/aic_zlp_quirk.conf"
+    mkdir -p "$(dirname "$ml_conf")" >> "$LOG_FILE" 2>&1
+    echo "aic_zlp_quirk" > "$ml_conf"
+
 	modprobe aic_zlp_quirk \
         vendor_id="${ZLP_VENDOR_ID}" product_id="${ZLP_PRODUCT_ID}" \
         >> "$LOG_FILE" 2>&1
