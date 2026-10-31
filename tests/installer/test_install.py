@@ -40,6 +40,7 @@ class InstallerTests(unittest.TestCase):
         script = script.replace("/sys/firmware/efi", str(self.root / "efi"))
         script = script.replace("/etc/wireplumber", str(self.root / "wpetc"))
         script = script.replace("/etc/modprobe.d", str(self.root / "mpd"))
+        script = script.replace("/sys/bus/usb/devices", str(self.root / "usbsys"))
         setup = f"""
 {SHELL_OPTIONS}
 SCRIPT_DIR={shlex.quote(str(self.root))}
@@ -187,6 +188,59 @@ cleanup_legacy_bluetooth_config() {{ echo LEGACY_CLEANUP; }}
         self.assertIn("--vendor-bt", result.stdout)
         mpd = self.root / "mpd"
         self.assertFalse(mpd.exists() and (mpd / "aic8800-bt-vendor.conf").exists())
+
+    def zlp_target_case(self, vid):
+        dev = self.root / "usbsys" / "1-8"
+        dev.mkdir(parents=True)
+        (dev / "idVendor").write_text(vid + "\n")
+        (dev / "idProduct").write_text("8d81\n")
+        result = self.run_installer_function(
+            "aic_zlp_target_present", stubs="", after="\necho RC=$?; echo ID=$ZLP_VENDOR_ID:$ZLP_PRODUCT_ID",
+        )
+        return result
+
+    def test_zlp_target_detects_a69c_identity(self):
+        result = self.zlp_target_case("a69c")
+        self.assertIn("RC=0", result.stdout)
+        self.assertIn("ID=0xa69c:0x8d81", result.stdout)
+
+    def test_zlp_target_detects_368b_identity(self):
+        result = self.zlp_target_case("368b")
+        self.assertIn("RC=0", result.stdout)
+        self.assertIn("ID=0x368b:0x8d81", result.stdout)
+
+    def test_zlp_target_ignores_other_ids(self):
+        dev = self.root / "usbsys" / "1-8"
+        dev.mkdir(parents=True)
+        (dev / "idVendor").write_text("a69c\n")
+        (dev / "idProduct").write_text("8d80\n")
+        result = self.run_installer_function(
+            "aic_zlp_target_present", stubs="", after="",
+        )
+        # set -e aborts when the function returns 1 (no match): that is the
+        # negative-path outcome; a regression broadening the ID match
+        # (e.g. considering a69c:8d80 a target) would return 0 instead.
+        self.assertNotEqual(result.returncode, 0)
+
+    def zlp_install_case(self, vid):
+        dev = self.root / "usbsys" / "1-8"
+        dev.mkdir(parents=True)
+        (dev / "idVendor").write_text(vid + "\n")
+        (dev / "idProduct").write_text("8d81\n")
+        self.run_installer_function(
+            "aic_zlp_target_present", stubs="", after="\necho ID=$ZLP_VENDOR_ID:$ZLP_PRODUCT_ID",
+        )
+        result = self.run_installer_function(
+            "install_zlp_quirk",
+            stubs=f"ZLP_VENDOR_ID=0x{vid}\nZLP_PRODUCT_ID=0x8d81\nmodprobe() {{ :; }}",
+        )
+        return result
+
+    def test_zlp_install_persists_detected_identity(self):
+        result = self.zlp_install_case("a69c")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        conf = next((self.root / "mpd").glob("aic8800-zlp-quirk.conf"))
+        self.assertIn("options aic_zlp_quirk vendor_id=0xa69c product_id=0x8d81", conf.read_text())
 
 
 if __name__ == "__main__":

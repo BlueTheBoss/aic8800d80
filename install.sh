@@ -661,17 +661,41 @@ refresh_initramfs() {
 #############################################################################
 
 aic_zlp_target_present() {
-    local device
+    local device vid pid
 
+    ZLP_VENDOR_ID=""
+    ZLP_PRODUCT_ID=""
     for device in /sys/bus/usb/devices/*; do
         [ -r "$device/idVendor" ] || continue
         [ -r "$device/idProduct" ] || continue
-        [ "$(cat "$device/idVendor")" = "368b" ] || continue
-        [ "$(cat "$device/idProduct")" = "8d81" ] || continue
-        return 0
+        vid=$(cat "$device/idVendor" 2>/dev/null)
+        pid=$(cat "$device/idProduct" 2>/dev/null)
+        # Identities confirmed to require ACL ZLP (issue #63 lineage):
+        # 368b:8d81 and a69c:8d81 (AIC's main vendor ID on many combos).
+        if { [ "$vid" = "368b" ] || [ "$vid" = "a69c" ]; } \
+           && [ "$pid" = "8d81" ]; then
+            ZLP_VENDOR_ID="0x$(printf '%s' "$vid")"
+            ZLP_PRODUCT_ID="0x$(printf '%s' "$pid")"
+            return 0
+        fi
     done
 
     return 1
+}
+
+install_zlp_quirk() {
+    # Persist the detected identity so future autoloads (boot, replug,
+    # kernel-update rebuilds) start the quirk with the right parameters.
+    local conf="/etc/modprobe.d/aic8800-zlp-quirk.conf"
+    mkdir -p "$(dirname "$conf")" >> "$LOG_FILE" 2>&1
+    {
+        echo "# Written by the aic8800 installer for the detected combo identity:"
+        echo "# ${ZLP_VENDOR_ID}:${ZLP_PRODUCT_ID}."
+        echo "options aic_zlp_quirk vendor_id=${ZLP_VENDOR_ID} product_id=${ZLP_PRODUCT_ID}"
+    } > "$conf"
+	modprobe aic_zlp_quirk \
+        vendor_id="${ZLP_VENDOR_ID}" product_id="${ZLP_PRODUCT_ID}" \
+        >> "$LOG_FILE" 2>&1
 }
 
 load_module() {
@@ -738,13 +762,13 @@ load_module() {
         fi
     fi
 
-    # The module has a USB alias and normally autoloads when 368b:8d81 appears.
-    # Explicitly load it here as well when that device was already present before
-    # DKMS installation and therefore did not generate a new modalias event.
+    # The module has a USB alias and normally autoloads via that identity.
+    # Explicitly load it here as well when the adapter was already present
+    # before DKMS installation, and persist the identity for future boots.
     if aic_zlp_target_present; then
-        print_info "Loading the 368b:8d81 Bluetooth ACL ZLP quirk..."
-        if modprobe aic_zlp_quirk >> "$LOG_FILE" 2>&1; then
-            print_success "Device-scoped Bluetooth ZLP quirk is active."
+        print_info "Loading the Bluetooth ACL ZLP quirk for ${ZLP_VENDOR_ID}:${ZLP_PRODUCT_ID}..."
+        if install_zlp_quirk; then
+            print_success "Bluetooth ACL ZLP quirk is active and persisted for ${ZLP_VENDOR_ID}:${ZLP_PRODUCT_ID}."
         else
             print_warning "The ZLP quirk could not attach; system btusb remains unchanged."
             print_info "Check CONFIG_KPROBES, Secure Boot, and: sudo dmesg | grep aic_zlp_quirk"
@@ -796,12 +820,12 @@ verify_installation() {
             if [ -r /sys/module/aic_zlp_quirk/parameters/hook ]; then
                 zlp_hook=$(cat /sys/module/aic_zlp_quirk/parameters/hook)
             fi
-            print_success "Bluetooth ACL ZLP quirk is loaded (hook: $zlp_hook)."
+            print_success "Bluetooth ACL ZLP quirk is loaded for ${ZLP_VENDOR_ID}:${ZLP_PRODUCT_ID} (hook: $zlp_hook)."
         else
-            print_warning "USB device 368b:8d81 is present but aic_zlp_quirk is not loaded."
+            print_warning "USB device ${ZLP_VENDOR_ID}:${ZLP_PRODUCT_ID} is present but aic_zlp_quirk is not loaded."
         fi
     else
-        print_info "Bluetooth ZLP quirk is installed but inactive (no 368b:8d81 device present)."
+        print_info "Bluetooth ZLP quirk is installed but inactive (no known AIC combo identity present)."
     fi
 
     echo ""
@@ -859,7 +883,7 @@ show_final_instructions() {
         echo "  Optional: rerun with --vendor-bt for the vendor aic_btusb driver"
         echo "  (voice/SCO handling; AIC's Linux counterpart of the Windows driver)"
     fi
-    echo "✓ Device-scoped Bluetooth ACL ZLP quirk installed for 368b:8d81"
+    echo "✓ Device-scoped Bluetooth ACL ZLP quirk installed (identity-aware: 368b:8d81 and a69c:8d81)"
     echo "✓ Automatic rebuild enabled for kernel updates"
     echo "✓ Firmware installed in /lib/firmware/"
     echo ""
