@@ -15,6 +15,24 @@
 #define USB_BT_SUBCLASS		0x01
 #define USB_BT_PROTOCOL		0x01
 
+/*
+ * USB identity to watch. The default matches the 368b:8d81 variant from
+ * issue #63. Other members of the family, such as a69c:8d81, share the
+ * same transport and can use the quirk by loading with, for example:
+ *
+ *   insmod aic_zlp_quirk.ko vendor_id=0xa69c product_id=0x8d81
+ *
+ * The parameters are read-only at runtime; reload the module to change
+ * them. An unconfigured or 0x0000 identity disables every hook, so the
+ * module can never widen its scope by accident.
+ */
+static ushort vendor_id = AIC_USB_VENDOR_ID;
+static ushort product_id = AIC_USB_PRODUCT_ID;
+module_param(vendor_id, ushort, 0444);
+module_param(product_id, ushort, 0444);
+MODULE_PARM_DESC(vendor_id, "USB vendor ID of the AIC Bluetooth HCI device");
+MODULE_PARM_DESC(product_id, "USB product ID of the AIC Bluetooth HCI device");
+
 static atomic64_t injection_count = ATOMIC64_INIT(0);
 static const char *hook_name = "none";
 
@@ -64,12 +82,15 @@ static bool is_aic_bulk_out(const struct urb *urb)
 	if (!urb)
 		return false;
 
+	if (!vendor_id || !product_id)
+		return false;
+
 	udev = urb->dev;
 	if (!udev)
 		return false;
 
-	if (le16_to_cpu(udev->descriptor.idVendor) != AIC_USB_VENDOR_ID ||
-	    le16_to_cpu(udev->descriptor.idProduct) != AIC_USB_PRODUCT_ID)
+	if (le16_to_cpu(udev->descriptor.idVendor) != vendor_id ||
+	    le16_to_cpu(udev->descriptor.idProduct) != product_id)
 		return false;
 
 	return usb_pipetype(urb->pipe) == PIPE_BULK &&
@@ -169,11 +190,17 @@ static int __init aic_zlp_quirk_init(void)
 {
 	int ret;
 
+	if (!vendor_id || !product_id) {
+		pr_err("no target USB identity configured (vendor_id/product_id)\n");
+		return -EINVAL;
+	}
+
 	ret = register_kretprobe(&alloc_bulk_urb_probe);
 	if (!ret) {
 		active_hook = AIC_ZLP_HOOK_BTUSB_RETURN;
 		hook_name = "btusb:alloc_bulk_urb";
-		pr_info("attached to system btusb for USB device 368b:8d81\n");
+		pr_info("attached to system btusb for USB device %04x:%04x\n",
+			vendor_id, product_id);
 		return 0;
 	}
 
@@ -188,7 +215,8 @@ static int __init aic_zlp_quirk_init(void)
 
 	active_hook = AIC_ZLP_HOOK_USB_SUBMIT;
 	hook_name = "usb_submit_urb";
-	pr_info("attached USB submit fallback for device 368b:8d81 interface 0\n");
+	pr_info("attached USB submit fallback for device %04x:%04x interface 0\n",
+		vendor_id, product_id);
 	return 0;
 }
 
