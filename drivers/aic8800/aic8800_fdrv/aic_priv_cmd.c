@@ -287,8 +287,7 @@ static int aic_priv_cmd_set_tx (struct rwnx_hw *rwnx_hw, int argc, char *argv[],
 #endif
 #ifdef AICWF_SDIO_SUPPORT
 	struct aic_sdio_dev *dev = g_rwnx_plat->sdiodev;
-#endif
-#ifdef AICWF_USB_SUPPORT
+#elif defined(AICWF_USB_SUPPORT)
 	struct aic_usb_dev *dev = g_rwnx_plat->usbdev;
 #endif
 
@@ -445,8 +444,7 @@ static int aic_priv_cmd_set_set_power (struct rwnx_hw *rwnx_hw, int argc, char *
 	u8_l pwr;
 #ifdef AICWF_SDIO_SUPPORT
 	struct aic_sdio_dev *dev = g_rwnx_plat->sdiodev;
-#endif
-#ifdef AICWF_USB_SUPPORT
+#elif defined(AICWF_USB_SUPPORT)
 	struct aic_usb_dev *dev = g_rwnx_plat->usbdev;
 #endif
 
@@ -542,8 +540,7 @@ static int aic_priv_cmd_get_freq_cal (struct rwnx_hw *rwnx_hw, int argc, char *a
 	u32_l val;
 #ifdef AICWF_SDIO_SUPPORT
 	struct aic_sdio_dev *dev = g_rwnx_plat->sdiodev;
-#endif
-#ifdef AICWF_USB_SUPPORT
+#elif defined(AICWF_USB_SUPPORT)
 	struct aic_usb_dev *dev = g_rwnx_plat->usbdev;
 #endif
 
@@ -582,8 +579,7 @@ static int aic_priv_cmd_get_mac_addr (struct rwnx_hw *rwnx_hw, int argc, char *a
 	u32_l addr0, addr1;
 #ifdef AICWF_SDIO_SUPPORT
 	struct aic_sdio_dev *dev = g_rwnx_plat->sdiodev;
-#endif
-#ifdef AICWF_USB_SUPPORT
+#elif defined(AICWF_USB_SUPPORT)
 	struct aic_usb_dev *dev = g_rwnx_plat->usbdev;
 #endif
 
@@ -624,8 +620,7 @@ static int aic_priv_cmd_get_bt_mac_addr (struct rwnx_hw *rwnx_hw, int argc, char
 	u32_l addr0, addr1;
 #ifdef AICWF_SDIO_SUPPORT
 	struct aic_sdio_dev *dev = g_rwnx_plat->sdiodev;
-#endif
-#ifdef AICWF_USB_SUPPORT
+#elif defined(AICWF_USB_SUPPORT)
 	struct aic_usb_dev *dev = g_rwnx_plat->usbdev;
 #endif
 
@@ -648,8 +643,7 @@ static int aic_priv_cmd_set_vendor_info (struct rwnx_hw *rwnx_hw, int argc, char
 	u8_l vendor_info;
 #ifdef AICWF_SDIO_SUPPORT
 	struct aic_sdio_dev *dev = g_rwnx_plat->sdiodev;
-#endif
-#ifdef AICWF_USB_SUPPORT
+#elif defined(AICWF_USB_SUPPORT)
 	struct aic_usb_dev *dev = g_rwnx_plat->usbdev;
 #endif
 
@@ -670,8 +664,7 @@ static int aic_priv_cmd_get_vendor_info (struct rwnx_hw *rwnx_hw, int argc, char
 {
 #ifdef AICWF_SDIO_SUPPORT
 	struct aic_sdio_dev *dev = g_rwnx_plat->sdiodev;
-#endif
-#ifdef AICWF_USB_SUPPORT
+#elif defined(AICWF_USB_SUPPORT)
 	struct aic_usb_dev *dev = g_rwnx_plat->usbdev;
 #endif
 
@@ -705,8 +698,7 @@ static int aic_priv_cmd_rdwr_pwridx (struct rwnx_hw *rwnx_hw, int argc, char *ar
 	u8_l func = 0;
 #ifdef AICWF_SDIO_SUPPORT
 	struct aic_sdio_dev *dev = g_rwnx_plat->sdiodev;
-#endif
-#ifdef AICWF_USB_SUPPORT
+#elif defined(AICWF_USB_SUPPORT)
 	struct aic_usb_dev *dev = g_rwnx_plat->usbdev;
 #endif
 
@@ -741,8 +733,7 @@ static int aic_priv_cmd_rdwr_pwrlvl (struct rwnx_hw *rwnx_hw, int argc, char *ar
 	u8_l func = 0;
 #ifdef AICWF_SDIO_SUPPORT
 	struct aic_sdio_dev *dev = g_rwnx_plat->sdiodev;
-#endif
-#ifdef AICWF_USB_SUPPORT
+#elif defined(AICWF_USB_SUPPORT)
 	struct aic_usb_dev *dev = g_rwnx_plat->usbdev;
 #endif
 
@@ -814,8 +805,7 @@ static int aic_priv_cmd_rdwr_pwrofst (struct rwnx_hw *rwnx_hw, int argc, char *a
 	int res_len = 0;
 #ifdef AICWF_SDIO_SUPPORT
 	struct aic_sdio_dev *dev = g_rwnx_plat->sdiodev;
-#endif
-#ifdef AICWF_USB_SUPPORT
+#elif defined(AICWF_USB_SUPPORT)
 	struct aic_usb_dev *dev = g_rwnx_plat->usbdev;
 #endif
 
@@ -924,8 +914,7 @@ static int aic_priv_cmd_rdwr_efuse_pwrofst (struct rwnx_hw *rwnx_hw, int argc, c
 	int res_len = 0;
 #ifdef AICWF_SDIO_SUPPORT
 	struct aic_sdio_dev *dev = g_rwnx_plat->sdiodev;
-#endif
-#ifdef AICWF_USB_SUPPORT
+#elif defined(AICWF_USB_SUPPORT)
 	struct aic_usb_dev *dev = g_rwnx_plat->usbdev;
 #endif
 
@@ -1437,8 +1426,7 @@ static int aic_priv_cmd_rdwr_pwradd2x (struct rwnx_hw *rwnx_hw, int argc, char *
 	int8_t pwradd2x_in = 0;
 #ifdef AICWF_SDIO_SUPPORT
 	struct aic_sdio_dev *dev = g_rwnx_plat->sdiodev;
-#endif
-#ifdef AICWF_USB_SUPPORT
+#elif defined(AICWF_USB_SUPPORT)
 	struct aic_usb_dev *dev = g_rwnx_plat->usbdev;
 #endif
 
@@ -1478,8 +1466,7 @@ static int aic_priv_cmd_rdwr_efuse_pwradd2x (struct rwnx_hw *rwnx_hw, int argc, 
 	int8_t pwradd2x_in = 0;
 #ifdef AICWF_SDIO_SUPPORT
 	struct aic_sdio_dev *dev = g_rwnx_plat->sdiodev;
-#endif
-#ifdef AICWF_USB_SUPPORT
+#elif defined(AICWF_USB_SUPPORT)
 	struct aic_usb_dev *dev = g_rwnx_plat->usbdev;
 #endif
 

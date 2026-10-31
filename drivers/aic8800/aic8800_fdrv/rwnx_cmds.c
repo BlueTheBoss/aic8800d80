@@ -441,8 +441,7 @@ static int cmd_mgr_msgind(struct rwnx_cmd_mgr *cmd_mgr, struct rwnx_cmd_e2amsg *
 #ifdef AICWF_SDIO_SUPPORT
     struct aic_sdio_dev *sdiodev = container_of(cmd_mgr, struct aic_sdio_dev, cmd_mgr);
     struct rwnx_hw *rwnx_hw = sdiodev->rwnx_hw;
-#endif
-#ifdef AICWF_USB_SUPPORT
+#elif defined(AICWF_USB_SUPPORT)
     struct aic_usb_dev *usbdev = container_of(cmd_mgr, struct aic_usb_dev, cmd_mgr);
     struct rwnx_hw *rwnx_hw = usbdev->rwnx_hw;
 #endif
