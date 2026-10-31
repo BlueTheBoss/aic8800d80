@@ -2419,17 +2419,10 @@ static int aicwf_usb_probe(struct usb_interface *intf, const struct usb_device_i
     usb_dev->usb_rx_buf = vmalloc(sizeof(struct aicwf_usb_buf) * AICWF_USB_RX_URBS);
 
     if(!usb_dev->usb_tx_buf || !usb_dev->usb_rx_buf){
-        if(usb_dev->usb_tx_buf){
-            vfree(usb_dev);
-        }
-        
-        if(usb_dev->usb_tx_buf){
-            vfree(usb_dev);
-        }
-        
-        if(usb_dev){
-            kfree(usb_dev);
-        }
+        /* vfree(NULL) is a no-op, so both can be released unconditionally. */
+        vfree(usb_dev->usb_tx_buf);
+        vfree(usb_dev->usb_rx_buf);
+        kfree(usb_dev);
         AICWFDBG(LOGERROR, "%s usb_tx_buf or usb_rx_buf vmalloc fail\r\n", __func__);
         return -ENOMEM;
     }
