@@ -116,7 +116,23 @@ if [ "$legacy_refs_found" = false ]; then
 fi
 echo ""
 
-echo "8. Device-scoped Bluetooth ACL ZLP quirk:"
+echo "8. USB re-enumeration history since this boot (issue #53 forensics):"
+# A physical replug being "required" after airplane-mode resets usually means
+# the composite device left the bus entirely. Counting those events separates
+# "chip dropped off the bus" (device must re-enumerate) from "firmware lost
+# its Wi-Fi state" (btusb bound, HCI dead) from "only btusb lost state".
+if [ -r /proc/sys/kernel/random/boot_id ]; then
+    reenum_events=$(dmesg 2>/dev/null | grep -iEc '(a69c|368b|3625).*(disconnect|device descriptor read|reset)|usb .*disconnect, device number [0-9]+')
+    echo "   $reenum_events AIC USB disconnect/re-enumeration events found:"
+    if [ "$reenum_events" -gt 0 ]; then
+        dmesg 2>/dev/null | grep -iE '(a69c|368b|3625).*(disconnect|device descriptor read|reset)|usb .*disconnect, device number [0-9]+' | tail -20 | sed 's/^/     /'
+    fi
+else
+    echo "   (boot_id unavailable; skipping re-enumeration history)"
+fi
+echo ""
+
+echo "9. Device-scoped Bluetooth ACL ZLP quirk:"
 if [ "$zlp_target_found" = true ]; then
     if [ -d /sys/module/aic_zlp_quirk ]; then
         zlp_hook="unknown"
