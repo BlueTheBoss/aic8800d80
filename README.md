@@ -72,6 +72,18 @@ The quirk's `hook` and `injections` parameters under
 many URBs were modified; a climbing counter during audio playback confirms
 the quirk is engaged.
 
+### Bluetooth microphone capture (HFP/SCO)
+
+The AIC8800D80 family desyncs its mSBC stream over USB isochronous SCO
+(`SCO packet for unknown connection handle`, bursts of `corrupted SCO
+packet`); microphone capture then returns nothing and the profile-switch
+retries disturb A2DP playback. CVSD is negotiated reliably, so the installer
+drops `wireplumber/52-aic8800-no-msbc.conf` into
+`/etc/wireplumber/wireplumber.conf.d/` when WirePlumber is present, forcing
+CVSD for calls while leaving A2DP music quality untouched. Delete that file
+to regain mSBC wideband calls, e.g. after a chip-firmware update that fixes
+the SCO path.
+
 ### Disclaimer
 I did not develop this software, The code is sourced from the Tenda U11 driver. I only made some modifications to the code to adapt it to newer kernel versions. Apart from compilation issues, I am unable to address other problems.
 

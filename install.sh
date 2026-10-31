@@ -456,6 +456,26 @@ install_firmware() {
         print_warning "USB modeswitch configuration file not found: $modeswitch_source"
     fi
 
+    # Install WirePlumber Bluetooth SCO quirk: mSBC over USB desyncs on the
+    # AIC8800D80 combo ("SCO packet for unknown connection handle"/
+    # "corrupted SCO packet", dead mic, profile-switch churn); CVSD is the
+    # reliable negotiated codec. Only installed where WirePlumber exists.
+    local bt_conf_source="${SCRIPT_DIR}/wireplumber/52-aic8800-no-msbc.conf"
+    local bt_conf_dest="/etc/wireplumber/wireplumber.conf.d/52-aic8800-no-msbc.conf"
+
+    if [ -f "$bt_conf_source" ]; then
+        if [ -d /etc/wireplumber ] || command -v wireplumber >/dev/null 2>&1; then
+            print_info "Installing WirePlumber Bluetooth SCO quirk to $bt_conf_dest..."
+            mkdir -p /etc/wireplumber/wireplumber.conf.d >> "$LOG_FILE" 2>&1 || true
+            cp "$bt_conf_source" "$bt_conf_dest" >> "$LOG_FILE" 2>&1
+            print_success "WirePlumber Bluetooth SCO quirk installed (AIC mSBC disabled, CVSD negotiated)."
+        else
+            print_info "WirePlumber not found; skipping Bluetooth SCO quirk installation."
+        fi
+    else
+        print_warning "WirePlumber Bluetooth SCO quirk file not found: $bt_conf_source"
+    fi
+
     print_success "Firmware installed successfully."
 }
 

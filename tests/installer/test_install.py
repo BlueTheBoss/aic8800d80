@@ -38,6 +38,7 @@ class InstallerTests(unittest.TestCase):
         script = "\n".join(functions)
         script = script.replace("/lib/firmware", str(self.firmware))
         script = script.replace("/sys/firmware/efi", str(self.root / "efi"))
+        script = script.replace("/etc/wireplumber", str(self.root / "wpetc"))
         setup = f"""
 {SHELL_OPTIONS}
 SCRIPT_DIR={shlex.quote(str(self.root))}
@@ -131,6 +132,41 @@ cleanup_legacy_bluetooth_config() {{ echo LEGACY_CLEANUP; }}
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertFalse(old.exists())
         self.assertEqual((old.parent / "new.bin").read_bytes(), b"new")
+
+    def test_bt_sco_quirk_drop_in_installed_when_wireplumber(self):
+        fw_dir = self.root / "fw" / "aic8800D80"
+        fw_dir.mkdir(parents=True)
+        (fw_dir / "fmacfw.bin").write_bytes(b"fw")
+        quirk_dir = self.root / "wireplumber"
+        quirk_dir.mkdir()
+        (quirk_dir / "52-aic8800-no-msbc.conf").write_text("monitor.bluez.properties = {}")
+        result = self.run_installer_function(
+            "install_firmware",
+            stubs="wireplumber() { :; }"
+                  "\nmkdir() { echo MKDIR; }"
+                  "\ncp() { echo CP $*; }",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("SCO quirk installed", result.stdout)
+        # install_firmware logs cp/mkdir output, not stdout.
+        log = (self.root / "install.log").read_text()
+        self.assertIn("52-aic8800-no-msbc.conf", log)
+        self.assertIn("CP ", log)
+
+    def test_bt_sco_quirk_skipped_without_wireplumber(self):
+        fw_dir = self.root / "fw" / "aic8800D80"
+        fw_dir.mkdir(parents=True)
+        (fw_dir / "fmacfw.bin").write_bytes(b"fw")
+        quirk_dir = self.root / "wireplumber"
+        quirk_dir.mkdir()
+        (quirk_dir / "52-aic8800-no-msbc.conf").write_text("monitor.bluez.properties = {}")
+        # command -v stubbed to fail so wireplumber counts as absent.
+        result = self.run_installer_function(
+            "install_firmware", stubs="command() { return 127; }",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("skipping Bluetooth SCO quirk", result.stdout)
+        self.assertNotIn("SCO quirk installed", result.stdout)
 
 
 if __name__ == "__main__":

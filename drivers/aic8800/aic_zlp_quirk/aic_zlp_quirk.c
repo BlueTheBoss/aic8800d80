@@ -141,7 +141,8 @@ static void enable_zlp(struct urb *urb)
 	count = atomic64_inc_return(&injection_count);
 
 	if (count == 1)
-		pr_info("enabled ZLP on the first 368b:8d81 ACL bulk OUT URB\n");
+		pr_info("enabled ZLP on the first %04x:%04x ACL bulk OUT URB\n",
+			vendor_id, product_id);
 }
 
 static int alloc_bulk_urb_ret_handler(struct kretprobe_instance *ri,
