@@ -49,6 +49,74 @@ the distribution's original `btusb.ko` installed and bound to the device. The
 quirk is filtered to that VID:PID and fails closed when the required kernel
 probe support is unavailable.
 
+Other members of the family, such as `a69c:8d81` (AIC's main vendor ID, the
+default identity for many AIC8800D80 combo adapters), share the same transport
+and the same end-of-transfer requirement; audio failing a few seconds into
+heavy A2DP traffic is the same mechanism. Since commit 882a510 the quirk's
+target identity is a load-time parameter:
+
+```bash
+sudo insmod aic_zlp_quirk.ko vendor_id=0xa69c product_id=0x8d81
+```
+
+Combine it with DKMS installation through an options file, which any later
+load path (install.sh, kernel-update rebuilds) honors:
+
+```bash
+echo "options aic_zlp_quirk vendor_id=0xa69c product_id=0x8d81" | \
+  sudo tee /etc/modprobe.d/aic8800-zlp.conf
+```
+
+The quirk's `hook` and `injections` parameters under
+`/sys/module/aic_zlp_quirk/parameters/` report which hook attached and how
+many URBs were modified; a climbing counter during audio playback confirms
+the quirk is engaged.
+
+### Vendor Bluetooth driver (`--vendor-bt`)
+
+The bundled driver tree includes `aic_btusb` — AIC's Linux Bluetooth HCI
+driver (GPLv2, built for the kernel BlueZ stack) — as an optional companion
+to the standard `btusb` path. It carries the vendor's own voice/SCO
+handling (single-SCO alternate-setting logic and event tracking), which is
+the counterpart of the Windows driver shipped with combo dongles.
+
+```bash
+sudo ./install.sh --vendor-bt
+```
+
+This builds and installs `aic_btusb.ko` via DKMS and writes
+`/etc/modprobe.d/aic8800-bt-vendor.conf` (blacklists `btusb`); the vendor
+driver's USB ID table covers the AIC combo IDs (`a69c:8d81`,
+`368b:8d81`, …), so with `btusb` out of the way it binds automatically on
+the next enumeration — no manual binding or scripts afterwards. The
+installer also swaps a live, already-bound `btusb` immediately when run
+with the adapter present.
+
+Revert any time:
+
+```bash
+sudo rm /etc/modprobe.d/aic8800-bt-vendor.conf
+sudo modprobe -r aic_btusb && sudo modprobe btusb
+```
+
+This opt-in is primarily for adapters whose headset profile misbehaves
+under `btusb` (silent microphone, `corrupted SCO packet` bursts). When
+switching over, remove any WirePlumber HFP overrides shipped earlier
+(`wireplumber/52-aic8800-no-msbc.conf` and a user-level equivalent), since
+wideband mSBC may behave better under the vendor driver.
+
+### Bluetooth microphone capture (HFP/SCO)
+
+The AIC8800D80 family desyncs its mSBC stream over USB isochronous SCO
+(`SCO packet for unknown connection handle`, bursts of `corrupted SCO
+packet`); microphone capture then returns nothing and the profile-switch
+retries disturb A2DP playback. CVSD is negotiated reliably, so the installer
+drops `wireplumber/52-aic8800-no-msbc.conf` into
+`/etc/wireplumber/wireplumber.conf.d/` when WirePlumber is present, forcing
+CVSD for calls while leaving A2DP music quality untouched. Delete that file
+to regain mSBC wideband calls, e.g. after a chip-firmware update that fixes
+the SCO path.
+
 ### Disclaimer
 I did not develop this software, The code is sourced from the Tenda U11 driver. I only made some modifications to the code to adapt it to newer kernel versions. Apart from compilation issues, I am unable to address other problems.
 

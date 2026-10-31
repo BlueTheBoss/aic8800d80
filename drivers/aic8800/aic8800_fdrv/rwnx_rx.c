@@ -794,7 +794,6 @@ static void rwnx_rx_mgmt(struct rwnx_hw *rwnx_hw, struct rwnx_vif *rwnx_vif,
 		AICWFDBG(LOGDEBUG,"rxmgmt:%x,%x\n", skb->data[0], skb->data[1]);
 
 #ifdef CONFIG_BAND_STEERING
-	bool queued = false;
 	struct tmp_feature_sta *f_sta = &rwnx_hw->feature_table[rwnx_vif->ap.tmp_sta_idx];
 	if (RWNX_VIF_TYPE(rwnx_vif) == NL80211_IFTYPE_AP) {
 #if 0

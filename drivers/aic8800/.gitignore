@@ -1,0 +1,9 @@
+# Kernel build outputs, kept out of version control.
+*.o
+*.ko
+*.order
+*.symvers
+*.cmd
+*.mod
+*.mod.c
+.tmp_versions/

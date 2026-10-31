@@ -26,6 +26,9 @@ readonly SRC_DIR="/usr/src/${DRV_NAME}-${DRV_VERSION}"
 readonly MODULE_NAME="aic8800_fdrv"
 readonly LOG_FILE="/tmp/aic8800d80_install.log"
 
+# Vendor Bluetooth (aic_btusb) preference; toggled by --vendor-bt in main().
+USE_VENDOR_BT=0
+
 # Script directory (where the script is located)
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -456,7 +459,57 @@ install_firmware() {
         print_warning "USB modeswitch configuration file not found: $modeswitch_source"
     fi
 
+    # Install WirePlumber Bluetooth SCO quirk: mSBC over USB desyncs on the
+    # AIC8800D80 combo ("SCO packet for unknown connection handle"/
+    # "corrupted SCO packet", dead mic, profile-switch churn); CVSD is the
+    # reliable negotiated codec. Only installed where WirePlumber exists.
+    local bt_conf_source="${SCRIPT_DIR}/wireplumber/52-aic8800-no-msbc.conf"
+    local bt_conf_dest="/etc/wireplumber/wireplumber.conf.d/52-aic8800-no-msbc.conf"
+
+    if [ -f "$bt_conf_source" ]; then
+        if [ -d /etc/wireplumber ] || command -v wireplumber >/dev/null 2>&1; then
+            print_info "Installing WirePlumber Bluetooth SCO quirk to $bt_conf_dest..."
+            mkdir -p /etc/wireplumber/wireplumber.conf.d >> "$LOG_FILE" 2>&1 || true
+            cp "$bt_conf_source" "$bt_conf_dest" >> "$LOG_FILE" 2>&1
+            print_success "WirePlumber Bluetooth SCO quirk installed (AIC mSBC disabled, CVSD negotiated)."
+        else
+            print_info "WirePlumber not found; skipping Bluetooth SCO quirk installation."
+        fi
+    else
+        print_warning "WirePlumber Bluetooth SCO quirk file not found: $bt_conf_source"
+    fi
+
     print_success "Firmware installed successfully."
+}
+
+#############################################################################
+# Vendor Bluetooth driver preference (--vendor-bt)
+#############################################################################
+
+# Optional opt-in: combo adapters bind the bundled vendor aic_btusb HCI
+# driver (the Linux counterpart of AIC's Windows driver, with voice/SCO
+# handling) instead of the generic kernel btusb. Implemented purely in
+# modprobe config — the vendor driver's USB ID table covers the AIC combo
+# IDs, so with btusb blacklisted it autoloads by modalias and no scripts
+# are involved afterwards.
+apply_vendor_bt_preference() {
+    if [ "$USE_VENDOR_BT" != "1" ]; then
+        print_info "Stock btusb Bluetooth path in use; pass --vendor-bt for the vendor aic_btusb driver (voice/SCO handling)."
+        return 0
+    fi
+
+    local conf="/etc/modprobe.d/aic8800-bt-vendor.conf"
+    print_info "Installing vendor Bluetooth driver preference to $conf..."
+    mkdir -p "$(dirname "$conf")" >> "$LOG_FILE" 2>&1
+    {
+        echo "# Written by the aic8800 installer (--vendor-bt)."
+        echo "# AIC combo Bluetooth interfaces bind the bundled vendor aic_btusb"
+        echo "# driver instead of the generic btusb. Remove this file and reboot"
+        echo "# (or run: sudo modprobe -r aic_btusb && sudo modprobe btusb) to"
+        echo "# return to the standard btusb path."
+        echo "blacklist btusb"
+    } > "$conf"
+    print_success "Vendor Bluetooth preference installed; aic_btusb binds on the next (re-)enumeration."
 }
 
 #############################################################################
@@ -608,17 +661,49 @@ refresh_initramfs() {
 #############################################################################
 
 aic_zlp_target_present() {
-    local device
+    local device vid pid
 
+    ZLP_VENDOR_ID=""
+    ZLP_PRODUCT_ID=""
     for device in /sys/bus/usb/devices/*; do
         [ -r "$device/idVendor" ] || continue
         [ -r "$device/idProduct" ] || continue
-        [ "$(cat "$device/idVendor")" = "368b" ] || continue
-        [ "$(cat "$device/idProduct")" = "8d81" ] || continue
-        return 0
+        vid=$(cat "$device/idVendor" 2>/dev/null)
+        pid=$(cat "$device/idProduct" 2>/dev/null)
+        # Identities confirmed to require ACL ZLP (issue #63 lineage):
+        # 368b:8d81 and a69c:8d81 (AIC's main vendor ID on many combos).
+        if { [ "$vid" = "368b" ] || [ "$vid" = "a69c" ]; } \
+           && [ "$pid" = "8d81" ]; then
+            ZLP_VENDOR_ID="0x$(printf '%s' "$vid")"
+            ZLP_PRODUCT_ID="0x$(printf '%s' "$pid")"
+            return 0
+        fi
     done
 
     return 1
+}
+
+install_zlp_quirk() {
+    # Persist the detected identity so future autoloads (boot, replug,
+    # kernel-update rebuilds) start the quirk with the right parameters.
+    local conf="/etc/modprobe.d/aic8800-zlp-quirk.conf"
+    mkdir -p "$(dirname "$conf")" >> "$LOG_FILE" 2>&1
+    {
+        echo "# Written by the aic8800 installer for the detected combo identity:"
+        echo "# ${ZLP_VENDOR_ID}:${ZLP_PRODUCT_ID}."
+        echo "options aic_zlp_quirk vendor_id=${ZLP_VENDOR_ID} product_id=${ZLP_PRODUCT_ID}"
+    } > "$conf"
+
+    # Autoload the quirk at every boot; the modprobe.d options file above
+    # supplies the detected identity automatically so no manual modprobe is
+    # needed after reboot or replug.
+    local ml_conf="/etc/modules-load.d/aic_zlp_quirk.conf"
+    mkdir -p "$(dirname "$ml_conf")" >> "$LOG_FILE" 2>&1
+    echo "aic_zlp_quirk" > "$ml_conf"
+
+	modprobe aic_zlp_quirk \
+        vendor_id="${ZLP_VENDOR_ID}" product_id="${ZLP_PRODUCT_ID}" \
+        >> "$LOG_FILE" 2>&1
 }
 
 load_module() {
@@ -662,15 +747,36 @@ load_module() {
         print_info "Try rebooting or check: sudo dmesg | grep aic8800"
     fi
 
-    print_info "Combo adapters use the standard btusb driver when their Bluetooth interface appears."
+    if [ "$USE_VENDOR_BT" = "1" ]; then
+        print_info "Combo adapters use the vendor aic_btusb driver (--vendor-bt)."
+    else
+        print_info "Combo adapters use the standard btusb driver when their Bluetooth interface appears."
+    fi
 
-    # The module has a USB alias and normally autoloads when 368b:8d81 appears.
-    # Explicitly load it here as well when that device was already present before
-    # DKMS installation and therefore did not generate a new modalias event.
+    # --vendor-bt: swap the generic driver for the vendor one on the live
+    # system. The modprobe blacklist redirects any future re-enumeration;
+    # this also handles the already-bound case so no reboot is required.
+    if [ "$USE_VENDOR_BT" = "1" ]; then
+        print_info "Switching Bluetooth to the vendor aic_btusb driver..."
+        if modprobe -r btusb >> "$LOG_FILE" 2>&1; then
+            if modprobe aic_btusb >> "$LOG_FILE" 2>&1; then
+                print_success "Vendor aic_btusb driver is bound (no reboot needed)."
+            else
+                print_warning "aic_btusb did not bind immediately; it will bind on the next adapter (re-)enumeration."
+                print_info "Check: sudo dmesg | grep -E 'aic_btusb|bluetooth'"
+            fi
+        else
+            print_warning "Could not unload btusb (is a Bluetooth device busy?); reboot to switch drivers."
+        fi
+    fi
+
+    # The module has a USB alias and normally autoloads via that identity.
+    # Explicitly load it here as well when the adapter was already present
+    # before DKMS installation, and persist the identity for future boots.
     if aic_zlp_target_present; then
-        print_info "Loading the 368b:8d81 Bluetooth ACL ZLP quirk..."
-        if modprobe aic_zlp_quirk >> "$LOG_FILE" 2>&1; then
-            print_success "Device-scoped Bluetooth ZLP quirk is active."
+        print_info "Loading the Bluetooth ACL ZLP quirk for ${ZLP_VENDOR_ID}:${ZLP_PRODUCT_ID}..."
+        if install_zlp_quirk; then
+            print_success "Bluetooth ACL ZLP quirk is active and persisted for ${ZLP_VENDOR_ID}:${ZLP_PRODUCT_ID}."
         else
             print_warning "The ZLP quirk could not attach; system btusb remains unchanged."
             print_info "Check CONFIG_KPROBES, Secure Boot, and: sudo dmesg | grep aic_zlp_quirk"
@@ -702,10 +808,18 @@ verify_installation() {
         print_info "Wi-Fi module not currently loaded (this is OK if no hardware is connected)."
     fi
 
-    if lsmod | awk '{print $1}' | grep -qx 'btusb' || compgen -G '/sys/class/bluetooth/hci*' > /dev/null; then
-        print_success "A Bluetooth controller or the standard btusb module is present."
+    if lsmod | awk '{print $1}' | grep -qx 'btusb' || lsmod | awk '{print $1}' | grep -qx 'aic_btusb' || compgen -G '/sys/class/bluetooth/hci*' > /dev/null; then
+        print_success "A Bluetooth controller is bound (btusb or vendor aic_btusb)."
     else
         print_info "No Bluetooth controller is present (normal for Wi-Fi-only adapters or when no combo adapter is connected)."
+    fi
+
+    if [ "$USE_VENDOR_BT" = "1" ]; then
+        if lsmod | awk '{print $1}' | grep -qx 'aic_btusb'; then
+            print_success "Vendor aic_btusb driver is active."
+        else
+            print_warning "Vendor aic_btusb preference is set but the driver is not loaded yet (binds at next enumeration/reboot)."
+        fi
     fi
 
     if aic_zlp_target_present; then
@@ -714,12 +828,12 @@ verify_installation() {
             if [ -r /sys/module/aic_zlp_quirk/parameters/hook ]; then
                 zlp_hook=$(cat /sys/module/aic_zlp_quirk/parameters/hook)
             fi
-            print_success "Bluetooth ACL ZLP quirk is loaded (hook: $zlp_hook)."
+            print_success "Bluetooth ACL ZLP quirk is loaded for ${ZLP_VENDOR_ID}:${ZLP_PRODUCT_ID} (hook: $zlp_hook)."
         else
-            print_warning "USB device 368b:8d81 is present but aic_zlp_quirk is not loaded."
+            print_warning "USB device ${ZLP_VENDOR_ID}:${ZLP_PRODUCT_ID} is present but aic_zlp_quirk is not loaded."
         fi
     else
-        print_info "Bluetooth ZLP quirk is installed but inactive (no 368b:8d81 device present)."
+        print_info "Bluetooth ZLP quirk is installed but inactive (no known AIC combo identity present)."
     fi
 
     echo ""
@@ -768,8 +882,16 @@ show_final_instructions() {
     echo -e "${CYAN}Important Information:${NC}"
     echo ""
     echo "✓ Wi-Fi driver and firmware loader installed via DKMS"
-    echo "✓ Combo adapters use the standard Linux btusb driver"
-    echo "✓ Device-scoped Bluetooth ACL ZLP quirk installed for 368b:8d81"
+    if [ "$USE_VENDOR_BT" = "1" ]; then
+        echo "✓ Combo adapters use the vendor aic_btusb driver (--vendor-bt)"
+        echo "  Revert anytime: remove /etc/modprobe.d/aic8800-bt-vendor.conf, then:"
+        echo "  sudo modprobe -r aic_btusb && sudo modprobe btusb"
+    else
+        echo "✓ Combo adapters use the standard Linux btusb driver"
+        echo "  Optional: rerun with --vendor-bt for the vendor aic_btusb driver"
+        echo "  (voice/SCO handling; AIC's Linux counterpart of the Windows driver)"
+    fi
+    echo "✓ Device-scoped Bluetooth ACL ZLP quirk installed (identity-aware: 368b:8d81 and a69c:8d81)"
     echo "✓ Automatic rebuild enabled for kernel updates"
     echo "✓ Firmware installed in /lib/firmware/"
     echo ""
@@ -838,7 +960,18 @@ main() {
     log_message "START" "Installation started"
     log_message "INFO" "Kernel: $(uname -r)"
     log_message "INFO" "Distribution: $(cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d= -f2 | tr -d '"')"
-    
+
+    # Optional flags before any system changes.
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+            --vendor-bt) USE_VENDOR_BT=1 ;;
+            *) echo "Unknown option: $arg (supported: --vendor-bt)" >> "$LOG_FILE" 2>&1 || true
+               echo "Unknown option: $arg (supported: --vendor-bt)"
+               exit 1 ;;
+        esac
+    done
+
     # Step 1: Check root privileges
     check_root
     
@@ -862,6 +995,10 @@ main() {
     
     # Step 8: Install via DKMS
     install_via_dkms
+
+    # Step 8b: Vendor Bluetooth preference (must be in place before the
+    # re-enumeration in load_module so aic_btusb wins driver selection).
+    apply_vendor_bt_preference
     
     # Step 9: Refresh initramfs
     refresh_initramfs

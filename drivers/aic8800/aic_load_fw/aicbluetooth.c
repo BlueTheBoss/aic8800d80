@@ -419,14 +419,14 @@ static int aic_load_firmware(u32 ** fw_buf, const char *name, struct device *dev
 
     /* start to read from firmware file */
     buffer = vmalloc(size);
-    memset(buffer, 0, size);
     if(!buffer){
             *fw_buf=NULL;
             __putname(path);
             filp_close(fp,NULL);
             fp=NULL;
-            return -1;
+            return -ENOMEM;
     }
+    memset(buffer, 0, size);
 
 
     #if LINUX_VERSION_CODE > KERNEL_VERSION(4, 13, 16)

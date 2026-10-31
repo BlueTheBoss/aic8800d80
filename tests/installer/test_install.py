@@ -38,6 +38,10 @@ class InstallerTests(unittest.TestCase):
         script = "\n".join(functions)
         script = script.replace("/lib/firmware", str(self.firmware))
         script = script.replace("/sys/firmware/efi", str(self.root / "efi"))
+        script = script.replace("/etc/wireplumber", str(self.root / "wpetc"))
+        script = script.replace("/etc/modules-load.d", str(self.root / "mld"))
+        script = script.replace("/etc/modprobe.d", str(self.root / "mpd"))
+        script = script.replace("/sys/bus/usb/devices", str(self.root / "usbsys"))
         setup = f"""
 {SHELL_OPTIONS}
 SCRIPT_DIR={shlex.quote(str(self.root))}
@@ -131,6 +135,129 @@ cleanup_legacy_bluetooth_config() {{ echo LEGACY_CLEANUP; }}
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertFalse(old.exists())
         self.assertEqual((old.parent / "new.bin").read_bytes(), b"new")
+
+    def test_bt_sco_quirk_drop_in_installed_when_wireplumber(self):
+        fw_dir = self.root / "fw" / "aic8800D80"
+        fw_dir.mkdir(parents=True)
+        (fw_dir / "fmacfw.bin").write_bytes(b"fw")
+        quirk_dir = self.root / "wireplumber"
+        quirk_dir.mkdir()
+        (quirk_dir / "52-aic8800-no-msbc.conf").write_text("monitor.bluez.properties = {}")
+        result = self.run_installer_function(
+            "install_firmware",
+            stubs="wireplumber() { :; }"
+                  "\nmkdir() { echo MKDIR; }"
+                  "\ncp() { echo CP $*; }",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("SCO quirk installed", result.stdout)
+        # install_firmware logs cp/mkdir output, not stdout.
+        log = (self.root / "install.log").read_text()
+        self.assertIn("52-aic8800-no-msbc.conf", log)
+        self.assertIn("CP ", log)
+
+    def test_bt_sco_quirk_skipped_without_wireplumber(self):
+        fw_dir = self.root / "fw" / "aic8800D80"
+        fw_dir.mkdir(parents=True)
+        (fw_dir / "fmacfw.bin").write_bytes(b"fw")
+        quirk_dir = self.root / "wireplumber"
+        quirk_dir.mkdir()
+        (quirk_dir / "52-aic8800-no-msbc.conf").write_text("monitor.bluez.properties = {}")
+        # command -v stubbed to fail so wireplumber counts as absent.
+        result = self.run_installer_function(
+            "install_firmware", stubs="command() { return 127; }",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("skipping Bluetooth SCO quirk", result.stdout)
+        self.assertNotIn("SCO quirk installed", result.stdout)
+
+    def test_vendor_bt_flag_writes_blacklist(self):
+        result = self.run_installer_function(
+            "apply_vendor_bt_preference", stubs="USE_VENDOR_BT=1",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Vendor Bluetooth preference installed", result.stdout)
+        conf = next((self.root / "mpd").glob("aic8800-bt-vendor.conf"))
+        content = conf.read_text()
+        self.assertIn("blacklist btusb", content)
+
+    def test_vendor_bt_flag_off_is_additive_only(self):
+        result = self.run_installer_function(
+            "apply_vendor_bt_preference", stubs="USE_VENDOR_BT=0",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("--vendor-bt", result.stdout)
+        mpd = self.root / "mpd"
+        self.assertFalse(mpd.exists() and (mpd / "aic8800-bt-vendor.conf").exists())
+
+    def zlp_target_case(self, vid):
+        dev = self.root / "usbsys" / "1-8"
+        dev.mkdir(parents=True)
+        (dev / "idVendor").write_text(vid + "\n")
+        (dev / "idProduct").write_text("8d81\n")
+        result = self.run_installer_function(
+            "aic_zlp_target_present", stubs="", after="\necho RC=$?; echo ID=$ZLP_VENDOR_ID:$ZLP_PRODUCT_ID",
+        )
+        return result
+
+    def test_zlp_target_detects_a69c_identity(self):
+        result = self.zlp_target_case("a69c")
+        self.assertIn("RC=0", result.stdout)
+        self.assertIn("ID=0xa69c:0x8d81", result.stdout)
+
+    def test_zlp_target_detects_368b_identity(self):
+        result = self.zlp_target_case("368b")
+        self.assertIn("RC=0", result.stdout)
+        self.assertIn("ID=0x368b:0x8d81", result.stdout)
+
+    def test_zlp_target_ignores_other_ids(self):
+        dev = self.root / "usbsys" / "1-8"
+        dev.mkdir(parents=True)
+        (dev / "idVendor").write_text("a69c\n")
+        (dev / "idProduct").write_text("8d80\n")
+        result = self.run_installer_function(
+            "aic_zlp_target_present", stubs="", after="",
+        )
+        # set -e aborts when the function returns 1 (no match): that is the
+        # negative-path outcome; a regression broadening the ID match
+        # (e.g. considering a69c:8d80 a target) would return 0 instead.
+        self.assertNotEqual(result.returncode, 0)
+
+    def zlp_install_case(self, vid):
+        dev = self.root / "usbsys" / "1-8"
+        dev.mkdir(parents=True)
+        (dev / "idVendor").write_text(vid + "\n")
+        (dev / "idProduct").write_text("8d81\n")
+        self.run_installer_function(
+            "aic_zlp_target_present", stubs="", after="\necho ID=$ZLP_VENDOR_ID:$ZLP_PRODUCT_ID",
+        )
+        result = self.run_installer_function(
+            "install_zlp_quirk",
+            stubs=f"ZLP_VENDOR_ID=0x{vid}\nZLP_PRODUCT_ID=0x8d81\nmodprobe() {{ :; }}",
+        )
+        return result
+
+    def test_zlp_install_persists_detected_identity(self):
+        result = self.zlp_install_case("a69c")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        conf = next((self.root / "mpd").glob("aic8800-zlp-quirk.conf"))
+        self.assertIn("options aic_zlp_quirk vendor_id=0xa69c product_id=0x8d81", conf.read_text())
+
+    def test_zlp_install_writes_modules_load_d(self):
+        dev = self.root / "usbsys" / "1-8"
+        dev.mkdir(parents=True)
+        (dev / "idVendor").write_text("a69c\n")
+        (dev / "idProduct").write_text("8d81\n")
+        self.run_installer_function(
+            "aic_zlp_target_present", stubs="", after="\necho ID=$ZLP_VENDOR_ID:$ZLP_PRODUCT_ID",
+        )
+        result = self.run_installer_function(
+            "install_zlp_quirk",
+            stubs="ZLP_VENDOR_ID=0xa69c\nZLP_PRODUCT_ID=0x8d81\nmodprobe() { :; }",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        ml = next((self.root / "mld").glob("aic_zlp_quirk.conf"))
+        self.assertEqual(ml.read_text().strip(), "aic_zlp_quirk")
 
 
 if __name__ == "__main__":

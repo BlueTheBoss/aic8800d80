@@ -959,54 +959,7 @@ static void aicwf_usb_tx_prepare(struct aic_usb_dev *usb_dev)
 }
 
 #ifdef CONFIG_USB_TX_AGGR
-int aicwf_usb_send_pkt(struct aic_usb_dev *usb_dev, u8 *buf, uint buf_len)
-{
-    int ret = 0;
-    struct aicwf_usb_buf *usb_buf;
-    unsigned long flags;
-    bool need_cfm = false;
-
-    if (usb_dev->state != USB_UP_ST) {
-        AICWFDBG(LOGERROR, "usb state is not up!\n");
-        return -EIO;
-    }
-
-    usb_buf = aicwf_usb_tx_dequeue(usb_dev, &usb_dev->tx_free_list,
-                        &usb_dev->tx_free_count, &usb_dev->tx_free_lock);
-    if (!usb_buf) {
-        AICWFDBG(LOGERROR, "free:%d, post:%d\n", usb_dev->tx_free_count, usb_dev->tx_post_count);
-        ret = -ENOMEM;
-        goto flow_ctrl;
-    }
-
-    usb_buf->skb = (struct sk_buff *)buf;
-    usb_buf->usbdev = usb_dev;
-    if (need_cfm)
-        usb_buf->cfm = true;
-    else
-        usb_buf->cfm = false;
-    AICWFDBG(LOGERROR, "%s len %d\n", __func__, buf_len);
-    print_hex_dump(KERN_ERR, "buf  ", DUMP_PREFIX_NONE, 16, 1, &buf[0], 32, false);
-    usb_fill_bulk_urb(usb_buf->urb, usb_dev->udev, usb_dev->bulk_out_pipe,
-                buf, buf_len, aicwf_usb_tx_complete, usb_buf);
-    usb_buf->urb->transfer_flags |= URB_ZERO_PACKET;
-
-    aicwf_usb_tx_queue(usb_dev, &usb_dev->tx_post_list, usb_buf,
-                    &usb_dev->tx_post_count, &usb_dev->tx_post_lock);
-    ret = 0;
-
-    flow_ctrl:
-    spin_lock_irqsave(&usb_dev->tx_flow_lock, flags);
-    if (usb_dev->tx_free_count < AICWF_USB_TX_LOW_WATER) {
-        usb_dev->tbusy = true;
-        aicwf_usb_tx_flowctrl(usb_dev->rwnx_hw, true);
-    }
-    spin_unlock_irqrestore(&usb_dev->tx_flow_lock, flags);
-
-    return ret;
-}
-
-int aicwf_usb_aggr(struct aicwf_tx_priv *tx_priv, struct sk_buff *pkt)
+static int aicwf_usb_aggr(struct aicwf_tx_priv *tx_priv, struct sk_buff *pkt)
 {
     struct rwnx_txhdr *txhdr = (struct rwnx_txhdr *)pkt->data;
     u8 usb_header[8];
@@ -1053,7 +1006,7 @@ int aicwf_usb_aggr(struct aicwf_tx_priv *tx_priv, struct sk_buff *pkt)
     return 0;
 }
 
-int aicwf_usb_send(struct aicwf_tx_priv *tx_priv)
+static int aicwf_usb_send(struct aicwf_tx_priv *tx_priv)
 {
     struct sk_buff *pkt;
     struct sk_buff *tx_buf;
@@ -1130,7 +1083,6 @@ int aicwf_usb_send(struct aicwf_tx_priv *tx_priv)
     aicwf_usb_tx_queue(usbdev, &usbdev->tx_post_list, usb_buf,
                     &usbdev->tx_post_count, &usbdev->tx_post_lock);
 
-    flow_ctrl:
     spin_lock_irqsave(&usbdev->tx_flow_lock, flags);
     if (usbdev->tx_free_count < AICWF_USB_TX_LOW_WATER) {
         usbdev->tbusy = true;
@@ -1631,6 +1583,7 @@ static void aicwf_usb_state_change(struct aic_usb_dev *usb_dev, int state)
 int align_param = 8;
 module_param(align_param, int, 0660);
 
+#ifndef CONFIG_USB_TX_AGGR
 static void usb_tx_flow_ctrl(struct rwnx_txhdr *txhdr, struct aic_usb_dev *usb_dev, struct rwnx_hw *rwnx_hw)
 {
 #ifdef CONFIG_PER_STA_FC
@@ -1660,6 +1613,7 @@ static void usb_tx_flow_ctrl(struct rwnx_txhdr *txhdr, struct aic_usb_dev *usb_d
 	}
 #endif
 }
+#endif /* CONFIG_USB_TX_AGGR */
 
 #ifdef CONFIG_USB_TX_AGGR
 static int aicwf_usb_bus_txdata(struct device *dev, struct sk_buff *pkt)
@@ -2419,17 +2373,10 @@ static int aicwf_usb_probe(struct usb_interface *intf, const struct usb_device_i
     usb_dev->usb_rx_buf = vmalloc(sizeof(struct aicwf_usb_buf) * AICWF_USB_RX_URBS);
 
     if(!usb_dev->usb_tx_buf || !usb_dev->usb_rx_buf){
-        if(usb_dev->usb_tx_buf){
-            vfree(usb_dev);
-        }
-        
-        if(usb_dev->usb_tx_buf){
-            vfree(usb_dev);
-        }
-        
-        if(usb_dev){
-            kfree(usb_dev);
-        }
+        /* vfree(NULL) is a no-op, so both can be released unconditionally. */
+        vfree(usb_dev->usb_tx_buf);
+        vfree(usb_dev->usb_rx_buf);
+        kfree(usb_dev);
         AICWFDBG(LOGERROR, "%s usb_tx_buf or usb_rx_buf vmalloc fail\r\n", __func__);
         return -ENOMEM;
     }
