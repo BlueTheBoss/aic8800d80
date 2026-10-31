@@ -49,6 +49,29 @@ the distribution's original `btusb.ko` installed and bound to the device. The
 quirk is filtered to that VID:PID and fails closed when the required kernel
 probe support is unavailable.
 
+Other members of the family, such as `a69c:8d81` (AIC's main vendor ID, the
+default identity for many AIC8800D80 combo adapters), share the same transport
+and the same end-of-transfer requirement; audio failing a few seconds into
+heavy A2DP traffic is the same mechanism. Since commit 882a510 the quirk's
+target identity is a load-time parameter:
+
+```bash
+sudo insmod aic_zlp_quirk.ko vendor_id=0xa69c product_id=0x8d81
+```
+
+Combine it with DKMS installation through an options file, which any later
+load path (install.sh, kernel-update rebuilds) honors:
+
+```bash
+echo "options aic_zlp_quirk vendor_id=0xa69c product_id=0x8d81" | \
+  sudo tee /etc/modprobe.d/aic8800-zlp.conf
+```
+
+The quirk's `hook` and `injections` parameters under
+`/sys/module/aic_zlp_quirk/parameters/` report which hook attached and how
+many URBs were modified; a climbing counter during audio playback confirms
+the quirk is engaged.
+
 ### Disclaimer
 I did not develop this software, The code is sourced from the Tenda U11 driver. I only made some modifications to the code to adapt it to newer kernel versions. Apart from compilation issues, I am unable to address other problems.
 
